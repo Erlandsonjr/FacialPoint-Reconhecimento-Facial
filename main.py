@@ -4,6 +4,7 @@ import face_recognition
 import numpy as np
 import cv2
 import os
+from fastapi.responses import JSONResponse
 
 app = FastAPI()
 
@@ -30,13 +31,37 @@ async def reconhecer(file: UploadFile = File(...), codificacao: list = File(...)
 
     rostos = face_recognition.face_locations(img_rgb)
     if not rostos:
-        return {"match": False}
+        return JSONResponse(content={"match": False}, headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+        })
 
     codificacoes = face_recognition.face_encodings(img_rgb, rostos)
+
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+    }
 
     for codificacao_rosto in codificacoes:
         correspondencia = face_recognition.compare_faces([codificacao], codificacao_rosto, tolerance=0.5)
         if correspondencia[0]:
-            return {"match": True}
+            return JSONResponse(content={"match": True}, headers=headers)
 
-    return {"match": False}
+    return JSONResponse(content={"match": False}, headers=headers)
+
+@app.options("/reconhecer/")
+async def options_reconhecer():
+    # Responder a requisições OPTIONS com cabeçalhos CORS apropriados
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        content={"msg": "OK"},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            "Access-Control-Max-Age": "86400",  # 24 horas em segundos
+        },
+    )
