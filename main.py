@@ -116,3 +116,10 @@ async def options_reconhecer():
             "Access-Control-Max-Age": "86400",  # 24 horas em segundos
         },
     )
+
+@app.get("/health")
+async def health_check():
+    """
+    Endpoint simples para verificação de saúde do serviço.
+    """
+    return {"status": "healthy"}
