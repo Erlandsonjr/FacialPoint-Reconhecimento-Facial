@@ -5,23 +5,34 @@ import numpy as np
 import cv2
 import os
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 
 app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-) 
+class CustomCORSMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        if request.method == "OPTIONS":
+            response = Response()
+        else:
+            response = await call_next(request)
+            
+        # Adicionar cabeçalhos CORS em todas as respostas, incluindo erros
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Max-Age"] = "86400"
+        
+        return response
+
+# Remova o middleware CORS padrão
+# app.add_middleware(CORSMiddleware, ...)
+
+# Adicione o middleware personalizado
+app.add_middleware(CustomCORSMiddleware)
 
 @app.post("/reconhecer/")
 async def reconhecer(file: UploadFile = File(...), codificacao: list = File(...)):
-    """
-    Endpoint para verificar se a codificação do rosto enviado corresponde à codificação fornecida.
-    Retorna apenas um booleano em JSON.
-    """
     headers = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -29,12 +40,29 @@ async def reconhecer(file: UploadFile = File(...), codificacao: list = File(...)
     }
     
     try:
-        conteudo = await file.read()
+        # Limitar tamanho do arquivo para evitar problemas
+        MAX_FILE_SIZE = 1 * 1024 * 1024  # 1MB
+        conteudo = await file.read(MAX_FILE_SIZE + 1)
+        
+        if len(conteudo) > MAX_FILE_SIZE:
+            return JSONResponse(
+                content={"match": False, "error": "Arquivo muito grande (máx. 1MB)"},
+                headers=headers
+            )
+
+        # Reduzir tamanho da imagem antes do processamento
         nparr = np.frombuffer(conteudo, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
         if img is None:
             return JSONResponse(content={"match": False, "error": "Imagem inválida"}, headers=headers)
+
+        # Redimensionar para processar mais rápido
+        height, width = img.shape[:2]
+        max_dim = 500
+        if height > max_dim or width > max_dim:
+            scale = max_dim / max(height, width)
+            img = cv2.resize(img, None, fx=scale, fy=scale)
 
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
