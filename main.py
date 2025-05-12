@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 import face_recognition
 import numpy as np
@@ -7,6 +7,7 @@ import os
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
+from typing import List
 
 app = FastAPI()
 
@@ -25,14 +26,20 @@ class CustomCORSMiddleware(BaseHTTPMiddleware):
         
         return response
 
-# Remova o middleware CORS padrão
-# app.add_middleware(CORSMiddleware, ...)
+# Remova o middleware personalizado
+# app.add_middleware(CustomCORSMiddleware)
 
-# Adicione o middleware personalizado
-app.add_middleware(CustomCORSMiddleware)
+# Use o middleware CORS padrão do FastAPI
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.post("/reconhecer/")
-async def reconhecer(file: UploadFile = File(...), codificacao: list = File(...)):
+async def reconhecer(file: UploadFile = File(...), codificacao: List[float] = Body(...)):
     headers = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "POST, OPTIONS",
