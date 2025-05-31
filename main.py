@@ -1,40 +1,16 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
-import face_recognition
-import numpy as np
-import cv2
-import os
-from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
-from typing import List
-from PIL import Image
+import traceback
 import io
+from PIL import Image
+import numpy as np
+import face_recognition
 
 app = FastAPI()
 
-class CustomCORSMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        if request.method == "OPTIONS":
-            response = Response()
-        else:
-            response = await call_next(request)
-            
-        # Adicionar cabeçalhos CORS em todas as respostas, incluindo erros
-        response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "*"
-        response.headers["Access-Control-Max-Age"] = "86400"
-        
-        return response
-
-# Remova o middleware personalizado
-# app.add_middleware(CustomCORSMiddleware)
-
-# Use o middleware CORS padrão do FastAPI
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Para desenvolvimento. Em produção, especifique origens exatas
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -130,7 +106,11 @@ async def reconhecer_multiplos(file: UploadFile = File(...)):
                     if usuario_id not in codificacoes_por_usuario:
                         codificacoes_por_usuario[usuario_id] = []
                     
-                    codificacoes_por_usuario[usuario_id].append(float(value))
+                    try:
+                        valor_float = float(value)
+                        codificacoes_por_usuario[usuario_id].append(valor_float)
+                    except ValueError:
+                        print(f"Valor não numérico: {value}")
         
         # Processar a imagem enviada
         contents = await file.read()
@@ -149,8 +129,13 @@ async def reconhecer_multiplos(file: UploadFile = File(...)):
         melhor_score = 0.0
         
         for usuario_id, codificacao in codificacoes_por_usuario.items():
+            # Verificar se a codificação tem tamanho correto
+            if len(codificacao) != 128:
+                print(f"Codificação para usuário {usuario_id} tem tamanho incorreto: {len(codificacao)}")
+                continue
+            
             # Reshape para formato esperado pelo face_recognition
-            codificacao_array = np.array(codificacao).reshape((1, -1))
+            codificacao_array = np.array(codificacao)
             
             # Calcular a distância (menor é melhor)
             distances = face_recognition.face_distance([codificacao_array], face_encoding)
@@ -174,6 +159,8 @@ async def reconhecer_multiplos(file: UploadFile = File(...)):
     
     except Exception as e:
         traceback_str = traceback.format_exc()
+        print(f"Erro: {str(e)}")
+        print(traceback_str)
         return {"success": False, "error": str(e), "traceback": traceback_str}
 
 @app.options("/reconhecer/")
@@ -196,67 +183,3 @@ async def health_check():
     Endpoint simples para verificação de saúde do serviço.
     """
     return {"status": "healthy"}
-
-@app.post("/reconhecer-multiplos/")
-async def reconhecer_multiplos(file: UploadFile = File(...)):
-    try:
-        # Extrair dados da requisição
-        form = await request.form()
-        codificacoes_por_usuario = {}
-        
-        # Processar todas as codificações enviadas
-        for key, value in form.items():
-            if key.startswith("codificacao_"):
-                # Formato da chave: codificacao_USERID_INDEX
-                parts = key.split("_")
-                if len(parts) == 3:
-                    usuario_id = parts[1]
-                    
-                    if usuario_id not in codificacoes_por_usuario:
-                        codificacoes_por_usuario[usuario_id] = []
-                    
-                    codificacoes_por_usuario[usuario_id].append(float(value))
-        
-        # Processar a imagem enviada
-        contents = await file.read()
-        image = Image.open(io.BytesIO(contents))
-        
-        # Detectar face na imagem
-        face_locations = face_recognition.face_locations(np.array(image))
-        if not face_locations:
-            return {"success": False, "message": "Nenhuma face detectada na imagem"}
-        
-        # Codificar a face detectada
-        face_encoding = face_recognition.face_encodings(np.array(image), face_locations)[0]
-        
-        # Comparar com todas as codificações de todos os usuários
-        melhor_match = None
-        melhor_score = 0.0
-        
-        for usuario_id, codificacao in codificacoes_por_usuario.items():
-            # Reshape para formato esperado pelo face_recognition
-            codificacao_array = np.array(codificacao).reshape((1, -1))
-            
-            # Calcular a distância (menor é melhor)
-            distances = face_recognition.face_distance([codificacao_array], face_encoding)
-            
-            # Converter distância para score (maior é melhor)
-            score = 1.0 - distances[0]
-            
-            if score > 0.6 and score > melhor_score:  # 0.6 é um limite aceitável
-                melhor_match = usuario_id
-                melhor_score = score
-        
-        if melhor_match:
-            return {
-                "success": True,
-                "match": True,
-                "usuarioId": melhor_match,
-                "confianca": float(melhor_score)
-            }
-        else:
-            return {"success": True, "match": False, "message": "Nenhuma correspondência encontrada"}
-    
-    except Exception as e:
-        traceback_str = traceback.format_exc()
-        return {"success": False, "error": str(e), "traceback": traceback_str}
