@@ -139,7 +139,8 @@ async def reconhecer_multiplos(request: Request, file: UploadFile = File(...)):
                 score = 1.0 - distances[0]
                 logger.info(f"Usuário {usuario_id}: score {score}")
                 
-                if score > 0.6 and score > melhor_score:  # 0.6 é um limite aceitável
+                # ALTERAÇÃO AQUI: Reduzir o limite de confiança para 0.4
+                if score > 0.4 and score > melhor_score:
                     melhor_match = usuario_id
                     melhor_score = score
             except Exception as e:
