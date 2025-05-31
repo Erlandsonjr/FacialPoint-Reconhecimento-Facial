@@ -124,10 +124,13 @@ async def reconhecer_multiplos(request: Request, file: UploadFile = File(...)):
         
         for usuario_id, codificacao in codificacoes_por_usuario.items():
             try:
-                # Verificar se a codificação tem tamanho esperado
-                if len(codificacao) != 128:
-                    logger.warning(f"Codificação para usuário {usuario_id} tem tamanho incorreto: {len(codificacao)}")
-                    continue
+                # REMOVER ESTA VERIFICAÇÃO DE TAMANHO
+                # if len(codificacao) != 128:
+                #     logger.warning(f"Codificação para usuário {usuario_id} tem tamanho incorreto: {len(codificacao)}")
+                #     continue
+                
+                # Processar a codificação, independente do tamanho
+                logger.info(f"Processando codificação para usuário {usuario_id} com {len(codificacao)} elementos")
                 
                 # Reshape para formato esperado pelo face_recognition
                 codificacao_array = np.array(codificacao)
@@ -139,12 +142,13 @@ async def reconhecer_multiplos(request: Request, file: UploadFile = File(...)):
                 score = 1.0 - distances[0]
                 logger.info(f"Usuário {usuario_id}: score {score}")
                 
-                # ALTERAÇÃO AQUI: Reduzir o limite de confiança para 0.4
+                # Usar limite de confiança mais baixo (0.4) assim como no outro endpoint
                 if score > 0.4 and score > melhor_score:
                     melhor_match = usuario_id
                     melhor_score = score
             except Exception as e:
                 logger.error(f"Erro ao processar usuário {usuario_id}: {str(e)}")
+                logger.error(traceback.format_exc())
         
         if melhor_match:
             logger.info(f"Match encontrado: usuário {melhor_match} com score {melhor_score}")
