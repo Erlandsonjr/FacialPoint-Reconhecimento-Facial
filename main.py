@@ -1,96 +1,85 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Body
+from fastapi import FastAPI, File, UploadFile, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
-import traceback
-import io
-from PIL import Image
-import numpy as np
 import face_recognition
+import numpy as np
+from PIL import Image
+import io
+import traceback
+import logging
+import os
+
+# Configurar logging para debug
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
+# Adicionar middleware CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Para desenvolvimento. Em produção, especifique origens exatas
+    allow_origins=["*"],  # Permitir todas as origens em desenvolvimento
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+@app.get("/")
+async def root():
+    return {"message": "FacePonto API de Reconhecimento Facial"}
+
 @app.post("/reconhecer/")
-async def reconhecer(file: UploadFile = File(...), codificacao: List[float] = Body(...)):
-    headers = {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
-    }
-    
+async def reconhecer(file: UploadFile = File(...), codificacao: list[float] = Form(...)):
     try:
-        # Limitar tamanho do arquivo para evitar problemas
-        MAX_FILE_SIZE = 1 * 1024 * 1024  # 1MB
-        conteudo = await file.read(MAX_FILE_SIZE + 1)
+        logger.info("Processando solicitação de reconhecimento")
         
-        if len(conteudo) > MAX_FILE_SIZE:
-            return JSONResponse(
-                content={"match": False, "error": "Arquivo muito grande (máx. 1MB)"},
-                headers=headers
-            )
-
-        # Reduzir tamanho da imagem antes do processamento
-        nparr = np.frombuffer(conteudo, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        # Processar a imagem enviada
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents))
         
-        if img is None:
-            return JSONResponse(content={"match": False, "error": "Imagem inválida"}, headers=headers)
-
-        # Redimensionar para processar mais rápido
-        height, width = img.shape[:2]
-        max_dim = 500
-        if height > max_dim or width > max_dim:
-            scale = max_dim / max(height, width)
-            img = cv2.resize(img, None, fx=scale, fy=scale)
-
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-        # Converta a codificação de string para lista se necessário
-        if isinstance(codificacao, str):
-            import json
-            try:
-                codificacao = json.loads(codificacao)
-            except:
-                return JSONResponse(content={"match": False, "error": "Formato de codificação inválido"}, headers=headers)
+        # Converter para array numpy
+        image_array = np.array(image)
         
-        # Verifique se a codificação é uma lista
-        if not isinstance(codificacao, list):
-            return JSONResponse(content={"match": False, "error": "Codificação deve ser uma lista"}, headers=headers)
-
-        rostos = face_recognition.face_locations(img_rgb)
-        if not rostos:
-            return JSONResponse(content={"match": False, "reason": "Nenhum rosto detectado"}, headers=headers)
-
-        codificacoes = face_recognition.face_encodings(img_rgb, rostos)
-
-        for codificacao_rosto in codificacoes:
-            correspondencia = face_recognition.compare_faces([codificacao], codificacao_rosto, tolerance=0.5)
-            if correspondencia[0]:
-                return JSONResponse(content={"match": True}, headers=headers)
-
-        return JSONResponse(content={"match": False, "reason": "Rosto não corresponde à codificação"}, headers=headers)
+        # Detectar face na imagem
+        face_locations = face_recognition.face_locations(image_array)
+        if not face_locations:
+            logger.warning("Nenhuma face detectada na imagem")
+            return {"success": False, "message": "Nenhuma face detectada na imagem"}
         
+        # Codificar a face detectada
+        face_encoding = face_recognition.face_encodings(image_array, face_locations)[0]
+        
+        # Comparar com a codificação fornecida
+        face_to_compare = np.array(codificacao)
+        
+        # Calcular a distância (menor é melhor)
+        face_distances = face_recognition.face_distance([face_to_compare], face_encoding)
+        
+        # Converter distância para nível de confiança
+        confidence = 1.0 - face_distances[0]
+        
+        # Verificar se a confiança é alta o suficiente
+        if confidence > 0.6:
+            return {
+                "success": True,
+                "match": True,
+                "confidence": float(confidence)
+            }
+        else:
+            return {
+                "success": True,
+                "match": False,
+                "confidence": float(confidence)
+            }
     except Exception as e:
-        import traceback
-        error_message = str(e)
-        error_trace = traceback.format_exc()
-        print(f"Erro: {error_message}")
-        print(f"Traceback: {error_trace}")
-        return JSONResponse(
-            status_code=500,
-            content={"match": False, "error": error_message},
-            headers=headers
-        )
+        logger.error(f"Erro: {str(e)}")
+        logger.error(traceback.format_exc())
+        return {"success": False, "error": str(e)}
 
 @app.post("/reconhecer-multiplos/")
-async def reconhecer_multiplos(file: UploadFile = File(...)):
+async def reconhecer_multiplos(request: Request, file: UploadFile = File(...)):
     try:
+        logger.info("Processando solicitação de reconhecimento múltiplo")
+        
         # Extrair dados da requisição
         form = await request.form()
         codificacoes_por_usuario = {}
@@ -100,7 +89,7 @@ async def reconhecer_multiplos(file: UploadFile = File(...)):
             if key.startswith("codificacao_"):
                 # Formato da chave: codificacao_USERID_INDEX
                 parts = key.split("_")
-                if len(parts) == 3:
+                if len(parts) >= 2:
                     usuario_id = parts[1]
                     
                     if usuario_id not in codificacoes_por_usuario:
@@ -110,44 +99,54 @@ async def reconhecer_multiplos(file: UploadFile = File(...)):
                         valor_float = float(value)
                         codificacoes_por_usuario[usuario_id].append(valor_float)
                     except ValueError:
-                        print(f"Valor não numérico: {value}")
+                        logger.warning(f"Valor não numérico: {value}")
+        
+        logger.info(f"Processando {len(codificacoes_por_usuario)} usuários")
         
         # Processar a imagem enviada
         contents = await file.read()
         image = Image.open(io.BytesIO(contents))
         
         # Detectar face na imagem
-        face_locations = face_recognition.face_locations(np.array(image))
+        image_array = np.array(image)
+        face_locations = face_recognition.face_locations(image_array)
+        
         if not face_locations:
+            logger.warning("Nenhuma face detectada na imagem")
             return {"success": False, "message": "Nenhuma face detectada na imagem"}
         
         # Codificar a face detectada
-        face_encoding = face_recognition.face_encodings(np.array(image), face_locations)[0]
+        face_encoding = face_recognition.face_encodings(image_array, face_locations)[0]
         
         # Comparar com todas as codificações de todos os usuários
         melhor_match = None
         melhor_score = 0.0
         
         for usuario_id, codificacao in codificacoes_por_usuario.items():
-            # Verificar se a codificação tem tamanho correto
-            if len(codificacao) != 128:
-                print(f"Codificação para usuário {usuario_id} tem tamanho incorreto: {len(codificacao)}")
-                continue
-            
-            # Reshape para formato esperado pelo face_recognition
-            codificacao_array = np.array(codificacao)
-            
-            # Calcular a distância (menor é melhor)
-            distances = face_recognition.face_distance([codificacao_array], face_encoding)
-            
-            # Converter distância para score (maior é melhor)
-            score = 1.0 - distances[0]
-            
-            if score > 0.6 and score > melhor_score:  # 0.6 é um limite aceitável
-                melhor_match = usuario_id
-                melhor_score = score
+            try:
+                # Verificar se a codificação tem tamanho esperado
+                if len(codificacao) != 128:
+                    logger.warning(f"Codificação para usuário {usuario_id} tem tamanho incorreto: {len(codificacao)}")
+                    continue
+                
+                # Reshape para formato esperado pelo face_recognition
+                codificacao_array = np.array(codificacao)
+                
+                # Calcular a distância (menor é melhor)
+                distances = face_recognition.face_distance([codificacao_array], face_encoding)
+                
+                # Converter distância para score (maior é melhor)
+                score = 1.0 - distances[0]
+                logger.info(f"Usuário {usuario_id}: score {score}")
+                
+                if score > 0.6 and score > melhor_score:  # 0.6 é um limite aceitável
+                    melhor_match = usuario_id
+                    melhor_score = score
+            except Exception as e:
+                logger.error(f"Erro ao processar usuário {usuario_id}: {str(e)}")
         
         if melhor_match:
+            logger.info(f"Match encontrado: usuário {melhor_match} com score {melhor_score}")
             return {
                 "success": True,
                 "match": True,
@@ -155,31 +154,16 @@ async def reconhecer_multiplos(file: UploadFile = File(...)):
                 "confianca": float(melhor_score)
             }
         else:
+            logger.info("Nenhum match encontrado")
             return {"success": True, "match": False, "message": "Nenhuma correspondência encontrada"}
     
     except Exception as e:
-        traceback_str = traceback.format_exc()
-        print(f"Erro: {str(e)}")
-        print(traceback_str)
-        return {"success": False, "error": str(e), "traceback": traceback_str}
+        logger.error(f"Erro: {str(e)}")
+        logger.error(traceback.format_exc())
+        return {"success": False, "error": str(e)}
 
-@app.options("/reconhecer/")
-async def options_reconhecer():
-    # Responder a requisições OPTIONS com cabeçalhos CORS apropriados
-    from fastapi.responses import JSONResponse
-    return JSONResponse(
-        content={"msg": "OK"},
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization",
-            "Access-Control-Max-Age": "86400",  # 24 horas em segundos
-        },
-    )
-
-@app.get("/health")
-async def health_check():
-    """
-    Endpoint simples para verificação de saúde do serviço.
-    """
-    return {"status": "healthy"}
+# Adicione isso para verificar se o servidor está funcionando
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
