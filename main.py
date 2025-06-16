@@ -23,7 +23,7 @@ app.add_middleware(
 
 @app.get("/")
 async def root():
-    return {"message": "FacePonto API de Reconhecimento Facial"}
+    return {"message": "FacialPoint API de Reconhecimento Facial"}
 
 @app.post("/reconhecer/")
 async def reconhecer(file: UploadFile = File(...), codificacao: list[float] = Form(...)):
