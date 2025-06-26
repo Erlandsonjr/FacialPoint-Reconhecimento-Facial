@@ -48,7 +48,7 @@ async def reconhecer(file: UploadFile = File(...), codificacao: list[float] = Fo
         
         confidence = 1.0 - face_distances[0]
         
-        if confidence > 0.6:
+        if confidence > 0.5:
             return {
                 "success": True,
                 "match": True,
@@ -120,7 +120,7 @@ async def reconhecer_multiplos(request: Request, file: UploadFile = File(...)):
                 score = 1.0 - float(distances[0])
                 logger.info(f"Usuário {usuario_id}: score {score}")
                 
-                if score > 0.6 and score > melhor_score:  
+                if score > 0.5 and score > melhor_score:  
                     melhor_match = usuario_id
                     melhor_score = score
             except Exception as e:
